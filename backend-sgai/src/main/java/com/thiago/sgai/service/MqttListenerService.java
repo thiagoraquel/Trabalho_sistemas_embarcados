@@ -19,14 +19,17 @@ public class MqttListenerService implements MqttCallback {
     private final MqttClient mqttClient;
     private final HistoricoSensorRepository historicoRepository;
     private final EstadoDispositivoRepository estadoRepository;
+    private final MotorRegrasService motorRegrasService; // <-- ADICIONE AQUI
 
     // O Spring injeta automaticamente o cliente MQTT e os dois repositórios do banco aqui
     public MqttListenerService(MqttClient mqttClient, 
                                HistoricoSensorRepository historicoRepository, 
-                               EstadoDispositivoRepository estadoRepository) {
+                               EstadoDispositivoRepository estadoRepository,
+                               MotorRegrasService motorRegrasService) {
         this.mqttClient = mqttClient;
         this.historicoRepository = historicoRepository;
         this.estadoRepository = estadoRepository;
+        this.motorRegrasService = motorRegrasService;
     }
 
     @PostConstruct
@@ -60,8 +63,16 @@ public class MqttListenerService implements MqttCallback {
             try {
                 // 1. Salva no Histórico (apenas sensores contínuos)
                 if (tipoDispositivo.equals("temp") || tipoDispositivo.equals("luz")) {
-                    Double valorNumerico = Double.parseDouble(payload);
-                    historicoRepository.save(new HistoricoSensor(salaId, tipoDispositivo, valorNumerico));
+                    try {
+                        Double valorNumerico = Double.parseDouble(payload);
+                        historicoRepository.save(new HistoricoSensor(salaId, tipoDispositivo, valorNumerico));
+                        
+                        // DISPARO DO MOTOR: Manda os dados frescos para serem avaliados pelas regras!
+                        motorRegrasService.avaliarRegra(salaId, tipoDispositivo, valorNumerico);
+                        
+                    } catch (NumberFormatException e) {
+                        System.err.println("⚠️ Valor numérico inválido para histórico: " + payload);
+                    }
                 }
                 
                 // 2. Atualiza a fotografia do Estado Atual (para todos)
