@@ -97,4 +97,16 @@ public class SalaController {
         com.thiago.sgai.model.RegraAutomacao regraSalva = regraRepository.save(novaRegra);
         return ResponseEntity.ok(regraSalva);
     }
+
+    /**
+     * ROTA 6: Busca a última leitura dos sensores (Temperatura, Luz, etc)
+     * GET /api/salas/{salaId}/telemetria
+     */
+    @GetMapping("/{salaId}/telemetria")
+    public ResponseEntity<com.thiago.sgai.model.HistoricoSensor> getUltimaTelemetria(@PathVariable String salaId) {
+        // Atualizamos o nome do método aqui também:
+        return historicoRepository.findTopBySalaOrderByDataHoraDesc(salaId)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
 }

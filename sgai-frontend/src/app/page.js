@@ -1,22 +1,54 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function Dashboard() {
-  // Estados fictícios (placeholders) para testarmos a interface visual antes do fetch
+  // Agora TUDO é um estado do React, para poder mudar na tela!
   const [ledStatus, setLedStatus] = useState("OFF");
   const [arStatus, setArStatus] = useState("OFF");
   const [cortinaStatus, setCortinaStatus] = useState("FECHADA");
-  
-  const sensorTemp = 29.3;
-  const sensorLuz = 1001;
+  const [sensorTemp, setSensorTemp] = useState(0.0);
+  const [sensorLuz, setSensorLuz] = useState(0);
 
-  // Função para simular o clique nos botões antes de integrarmos com a API POST do Java
-  // Função atualizada para enviar a ordem real para o Backend
+  // Função para buscar o estado atual lá do Spring Boot
+  const carregarDadosDaSala = async () => {
+    try {
+      // Puxa a fotografia instantânea completa (atuadores e sensores) de uma só vez!
+      const resposta = await fetch("http://localhost:8080/api/salas/sala1/status");
+      if (resposta.ok) {
+        const dados = await resposta.json();
+        
+        dados.forEach((disp) => {
+          // Ajusta os Atuadores
+          if (disp.dispositivo === "led") setLedStatus(disp.estado);
+          if (disp.dispositivo === "ar") setArStatus(disp.estado);
+          if (disp.dispositivo === "cortina") setCortinaStatus(disp.estado);
+          
+          // Ajusta os Sensores em Tempo Real (Mapeando direto do payload do MQTT salvo no banco)
+          if (disp.dispositivo === "temp") setSensorTemp(parseFloat(disp.estado));
+          if (disp.dispositivo === "luz") setSensorLuz(parseInt(disp.estado));
+        });
+      }
+    } catch (erro) {
+      console.error("Erro ao buscar dados do backend:", erro);
+    }
+  };
+  
+  // O useEffect roda sozinho quando a página abre e cria o "loop" de atualização
+  useEffect(() => {
+    carregarDadosDaSala(); // Busca imediatamente ao abrir a tela
+    
+    const intervalo = setInterval(() => {
+      carregarDadosDaSala(); // Atualiza a tela a cada 5 segundos
+    }, 5000);
+
+    return () => clearInterval(intervalo); // Limpa o timer se fecharmos a tela
+  }, []);
+
+  // Função para enviar a ordem real para o Backend quando o usuário clica
   const alternarDispositivo = async (dispositivo, estadoAtual, setEstado) => {
     let comandoStr = "";
 
-    // 1. Descobre qual comando enviar com base no dispositivo clicado e no estado atual
     if (dispositivo === "cortina") {
       comandoStr = estadoAtual === "ABERTA" ? "FECHAR_CORTINA" : "ABRIR_CORTINA";
     } else if (dispositivo === "led") {
@@ -26,20 +58,18 @@ export default function Dashboard() {
     }
 
     try {
-      // 2. Dispara a requisição POST para o Spring Boot (que vai repassar pro MQTT)
       const resposta = await fetch("http://localhost:8080/api/salas/sala1/comando", {
         method: "POST",
         headers: {
-          "Content-Type": "text/plain", // Estamos mandando texto puro
+          "Content-Type": "text/plain",
         },
         body: comandoStr,
       });
 
-      // 3. Se o Java confirmou o envio (Status 200 OK), a gente muda a cor do botão na tela!
       if (resposta.ok) {
         const novoEstado = (dispositivo === "cortina") 
           ? (comandoStr === "ABRIR_CORTINA" ? "ABERTA" : "FECHADA")
-          : (comandoStr.startsWith("LIGAR") ? "ON" : "OFF"); // Trocamos includes por startsWith
+          : (comandoStr.startsWith("LIGAR") ? "ON" : "OFF"); 
           
         setEstado(novoEstado);
         console.log(`✅ Comando real enviado com sucesso: ${comandoStr}`);
@@ -47,7 +77,7 @@ export default function Dashboard() {
         console.error("❌ Erro no backend ao processar o comando.");
       }
     } catch (erro) {
-      console.error("❌ O Dashboard não conseguiu achar o servidor Java. Ele está rodando?", erro);
+      console.error("❌ O Dashboard não conseguiu achar o servidor Java.", erro);
     }
   };
 
@@ -79,7 +109,7 @@ export default function Dashboard() {
             <div className="bg-gradient-to-br from-slate-800 to-slate-850 p-6 rounded-2xl border border-slate-750 shadow-xl flex justify-between items-center">
               <div>
                 <p className="text-sm font-medium text-slate-400 uppercase tracking-wider">Temperatura</p>
-                <p className="text-4xl font-black mt-2 text-white">{sensorTemp}°C</p>
+                <p className="text-4xl font-black mt-2 text-white">{sensorTemp.toFixed(1)}°C</p>
               </div>
               <div className="text-4xl p-4 bg-orange-500/10 rounded-2xl text-orange-400">🌡️</div>
             </div>
