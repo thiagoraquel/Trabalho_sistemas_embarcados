@@ -2,8 +2,10 @@ package com.thiago.sgai; // IMPORTANTE: Se as suas pastas físicas ainda forem c
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling; // <-- Importe aqui
 
 @SpringBootApplication
+@EnableScheduling // <-- Adicione esta anotação mágica aqui!
 public class SgaiApplication {
 
     public static void main(String[] args) {
