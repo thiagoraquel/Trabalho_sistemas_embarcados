@@ -7,7 +7,7 @@ import com.thiago.sgai.repository.HistoricoSensorRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import com.thiago.sgai.service.MotorRegrasService;
-
+import com.thiago.sgai.repository.RegraAutomacaoRepository;
 
 import java.util.List;
 
@@ -19,14 +19,17 @@ public class SalaController {
     private final EstadoDispositivoRepository estadoRepository;
     private final HistoricoSensorRepository historicoRepository;
     private final MotorRegrasService motorRegrasService;
+    private final RegraAutomacaoRepository regraRepository;
 
     // Injeção automática dos repositórios
     public SalaController(EstadoDispositivoRepository estadoRepository, 
                           HistoricoSensorRepository historicoRepository,
-                          com.thiago.sgai.service.MotorRegrasService motorRegrasService) {
+                          MotorRegrasService motorRegrasService,
+                          RegraAutomacaoRepository regraRepository  ) {
         this.estadoRepository = estadoRepository;
         this.historicoRepository = historicoRepository;
         this.motorRegrasService = motorRegrasService;
+        this. regraRepository = regraRepository;
     }
 
     /**
@@ -72,5 +75,26 @@ public class SalaController {
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Erro ao enviar comando: " + e.getMessage());
         }
+    }
+
+    /**
+     * ROTA 4: Busca todas as regras automáticas de uma sala
+     * GET /api/salas/{salaId}/regras
+     */
+    @GetMapping("/{salaId}/regras")
+    public ResponseEntity<List<com.thiago.sgai.model.RegraAutomacao>> getRegras(@PathVariable String salaId) {
+        return ResponseEntity.ok(regraRepository.findBySalaIdAndAtivaTrue(salaId));
+    }
+
+    /**
+     * ROTA 5: Cria uma nova regra customizada vinda do Dashboard
+     * POST /api/salas/{salaId}/regras
+     */
+    @PostMapping("/{salaId}/regras")
+    public ResponseEntity<com.thiago.sgai.model.RegraAutomacao> criarRegra(@PathVariable String salaId, 
+                                                                           @RequestBody com.thiago.sgai.model.RegraAutomacao novaRegra) {
+        novaRegra.setSalaId(salaId); // Garante que a regra pertence a esta sala
+        com.thiago.sgai.model.RegraAutomacao regraSalva = regraRepository.save(novaRegra);
+        return ResponseEntity.ok(regraSalva);
     }
 }
