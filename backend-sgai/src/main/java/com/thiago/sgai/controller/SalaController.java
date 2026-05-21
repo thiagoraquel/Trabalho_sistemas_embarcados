@@ -13,7 +13,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/salas")
-@CrossOrigin(origins = "*") // Permite que o Next.js (mesmo rodando em outra porta) acesse a API sem travar no CORS
+@CrossOrigin(origins = "http://localhost:3000") // <-- ESSA É A LINHA MÁGICA!
 public class SalaController {
 
     private final EstadoDispositivoRepository estadoRepository;
@@ -108,5 +108,23 @@ public class SalaController {
         return historicoRepository.findTopBySalaOrderByDataHoraDesc(salaId)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * ROTA 7: Remove uma regra de automação pelo ID
+     * DELETE /api/salas/{salaId}/regras/{id}
+     */
+    @DeleteMapping("/{salaId}/regras/{id}")
+    public ResponseEntity<Void> deletarRegra(@PathVariable String salaId, @PathVariable Long id) {
+        try {
+            if (regraRepository.existsById(id)) {
+                regraRepository.deleteById(id);
+                System.out.println("🗑️ [SALA CONTROLLER] Regra " + id + " removida do banco.");
+                return ResponseEntity.noContent().build(); // Retorna Status 204 (Sucesso, sem conteúdo)
+            }
+            return ResponseEntity.notFound().build();
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
     }
 }

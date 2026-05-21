@@ -1,54 +1,84 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 export default function Dashboard() {
-  // Agora TUDO é um estado do React, para poder mudar na tela!
+  // Estados de Telemetria e Atuadores
   const [ledStatus, setLedStatus] = useState("OFF");
   const [arStatus, setArStatus] = useState("OFF");
   const [cortinaStatus, setCortinaStatus] = useState("FECHADA");
   const [sensorTemp, setSensorTemp] = useState(0.0);
   const [sensorLuz, setSensorLuz] = useState(0);
 
-  // Função para buscar o estado atual lá do Spring Boot
+  // NOVO: Escudo de tempo para evitar as "piscadas" dos botões.
+  // Guarda o milissegundo exato em que o usuário clicou em cada botão.
+  const bloqueioUI = useRef({ led: 0, ar: 0, cortina: 0 });
+
+  // Estados para Listagem e Criação de Regras
+  const [regras, setRegras] = useState([]);
+  const [nomeRegra, setNomeRegra] = useState("");
+  const [tipoRegra, setTipoRegra] = useState("HORARIO_PONTUAL");
+  const [horaInicio, setHoraInicio] = useState("");
+  const [horaFim, setHoraFim] = useState("");
+  const [sensorAlvo, setSensorAlvo] = useState("temp");
+  const [operador, setOperador] = useState(">");
+  const [valorGatilho, setValorGatilho] = useState("");
+  
+  // Estados dos comandos que a regra vai enviar
+  const [cmdLed, setCmdLed] = useState("MANTER");
+  const [cmdAr, setCmdAr] = useState("MANTER");
+  const [cmdCortina, setCmdCortina] = useState("MANTER");
+
+  // Carrega sensores, atuadores e a lista de regras do banco
   const carregarDadosDaSala = async () => {
     try {
-      // Puxa a fotografia instantânea completa (atuadores e sensores) de uma só vez!
       const resposta = await fetch("http://localhost:8080/api/salas/sala1/status");
       if (resposta.ok) {
         const dados = await resposta.json();
-        
+        const agora = Date.now();
+
         dados.forEach((disp) => {
-          // Ajusta os Atuadores
-          if (disp.dispositivo === "led") setLedStatus(disp.estado);
-          if (disp.dispositivo === "ar") setArStatus(disp.estado);
-          if (disp.dispositivo === "cortina") setCortinaStatus(disp.estado);
+          // ATUADORES: O React só aceita o valor do banco se já passaram 7 segundos do último clique manual.
+          if (disp.dispositivo === "led" && (agora - bloqueioUI.current.led > 7000)) setLedStatus(disp.estado);
+          if (disp.dispositivo === "ar" && (agora - bloqueioUI.current.ar > 7000)) setArStatus(disp.estado);
+          if (disp.dispositivo === "cortina" && (agora - bloqueioUI.current.cortina > 7000)) setCortinaStatus(disp.estado);
           
-          // Ajusta os Sensores em Tempo Real (Mapeando direto do payload do MQTT salvo no banco)
+          // SENSORES: Como não clicamos neles, sempre atualizam em tempo real!
           if (disp.dispositivo === "temp") setSensorTemp(parseFloat(disp.estado));
           if (disp.dispositivo === "luz") setSensorLuz(parseInt(disp.estado));
         });
       }
     } catch (erro) {
-      console.error("Erro ao buscar dados do backend:", erro);
+      console.error("Erro ao carregar status:", erro);
     }
   };
-  
-  // O useEffect roda sozinho quando a página abre e cria o "loop" de atualização
+
+  const carregarRegras = async () => {
+    try {
+      const resp = await fetch("http://localhost:8080/api/salas/sala1/regras");
+      if (resp.ok) {
+        const listaRegras = await resp.json();
+        setRegras(listaRegras);
+      }
+    } catch (erro) {
+      console.error("Erro ao carregar regras:", erro);
+    }
+  };
+
   useEffect(() => {
-    carregarDadosDaSala(); // Busca imediatamente ao abrir a tela
+    carregarDadosDaSala();
+    carregarRegras();
     
     const intervalo = setInterval(() => {
-      carregarDadosDaSala(); // Atualiza a tela a cada 5 segundos
+      carregarDadosDaSala();
     }, 5000);
 
-    return () => clearInterval(intervalo); // Limpa o timer se fecharmos a tela
+    return () => clearInterval(intervalo);
   }, []);
 
-  // Função para enviar a ordem real para o Backend quando o usuário clica
+  // Envia comando de override manual
   const alternarDispositivo = async (dispositivo, estadoAtual, setEstado) => {
     let comandoStr = "";
-
     if (dispositivo === "cortina") {
       comandoStr = estadoAtual === "ABERTA" ? "FECHAR_CORTINA" : "ABRIR_CORTINA";
     } else if (dispositivo === "led") {
@@ -60,128 +90,286 @@ export default function Dashboard() {
     try {
       const resposta = await fetch("http://localhost:8080/api/salas/sala1/comando", {
         method: "POST",
-        headers: {
-          "Content-Type": "text/plain",
-        },
+        headers: { "Content-Type": "text/plain" },
         body: comandoStr,
       });
-
       if (resposta.ok) {
+        // Ativa o escudo de tempo para este dispositivo específico!
+        bloqueioUI.current[dispositivo] = Date.now();
+
         const novoEstado = (dispositivo === "cortina") 
           ? (comandoStr === "ABRIR_CORTINA" ? "ABERTA" : "FECHADA")
           : (comandoStr.startsWith("LIGAR") ? "ON" : "OFF"); 
-          
+        
         setEstado(novoEstado);
-        console.log(`✅ Comando real enviado com sucesso: ${comandoStr}`);
-      } else {
-        console.error("❌ Erro no backend ao processar o comando.");
       }
     } catch (erro) {
-      console.error("❌ O Dashboard não conseguiu achar o servidor Java.", erro);
+      console.error("Erro no fetch de comando:", erro);
+    }
+  };
+
+  // Submete a nova regra customizada estruturando o JSON de comandos
+  const salvarNovaRegra = async (e) => {
+    e.preventDefault();
+
+    const comandosObj = {};
+    if (cmdLed !== "MANTER") comandosObj.led = cmdLed;
+    if (cmdAr !== "MANTER") comandosObj.ar = cmdAr;
+    if (cmdCortina !== "MANTER") comandosObj.cortina = cmdCortina;
+
+    const payloadRegra = {
+      nome: nomeRegra,
+      tipoRegra: tipoRegra,
+      horaInicio: horaInicio ? `${horaInicio}:00` : null,
+      horaFim: tipoRegra === "CONDICAO_SENSOR" && horaFim ? `${horaFim}:00` : null,
+      sensorAlvo: tipoRegra === "CONDICAO_SENSOR" ? sensorAlvo : null,
+      operador: tipoRegra === "CONDICAO_SENSOR" ? operador : null,
+      valorGatilho: tipoRegra === "CONDICAO_SENSOR" ? parseFloat(valorGatilho) : null,
+      comandosJson: JSON.stringify(comandosObj),
+      ativa: true
+    };
+
+    try {
+      const resposta = await fetch("http://localhost:8080/api/salas/sala1/regras", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payloadRegra),
+      });
+
+      if (resposta.ok) {
+        setNomeRegra("");
+        setHoraInicio("");
+        setHoraFim("");
+        setValorGatilho("");
+        setCmdLed("MANTER");
+        setCmdAr("MANTER");
+        setCmdCortina("MANTER");
+        carregarRegras();
+        alert("Regra de automação salva com sucesso!");
+      }
+    } catch (erro) {
+      console.error("Erro ao salvar regra:", erro);
+    }
+  };
+
+  // Dispara a remoção da regra no backend
+  const excluirRegra = async (id) => {
+    if (!confirm("Tem certeza que deseja remover esta regra de automação?")) return;
+
+    try {
+      const resp = await fetch(`http://localhost:8080/api/salas/sala1/regras/${id}`, {
+        method: "DELETE",
+      });
+
+      if (resp.ok) {
+        // Recarrega a lista de regras dinamicamente na tela
+        carregarRegras();
+      } else {
+        alert("Erro ao tentar excluir a regra no servidor.");
+      }
+    } catch (erro) {
+      console.error("Erro ao conectar com o backend para exclusão:", erro);
     }
   };
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 p-6 font-sans">
       
-      {/* HEADER DO DASHBOARD */}
       <header className="max-w-6xl mx-auto mb-10 flex flex-col md:flex-row justify-between items-start md:items-center border-b border-slate-800 pb-6 gap-4">
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight bg-gradient-to-r from-emerald-400 to-teal-500 bg-clip-text text-transparent">
             SGAI · Sistema de Gestão Acadêmica Inteligente
           </h1>
-          <p className="text-slate-400 mt-1">Monitoramento e Automação Ambiental · Sala 1</p>
-        </div>
-        <div className="flex items-center gap-2 bg-emerald-500/10 text-emerald-400 px-3 py-1.5 rounded-full text-sm font-semibold border border-emerald-500/20">
-          <span className="w-2.5 h-2.5 bg-emerald-400 rounded-full animate-pulse"></span>
-          Conectado ao Backend
+          <p className="text-slate-400 mt-1">Painel Mestre de Controle e Automação Customizada</p>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto space-y-8">
+      <main className="max-w-6xl mx-auto space-y-10">
         
-        {/* SEÇÃO 1: CARDS DOS SENSORES (TELEMETRIA) */}
-        <section>
-          <h2 className="text-xl font-bold mb-4 text-slate-300">Sensores em Tempo Real</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            
-            {/* Card Temperatura */}
-            <div className="bg-gradient-to-br from-slate-800 to-slate-850 p-6 rounded-2xl border border-slate-750 shadow-xl flex justify-between items-center">
+        {/* TELEMETRIA E ATUADORES (LADO A LADO) */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          
+          {/* Cards de Sensores */}
+          <div className="lg:col-span-1 space-y-4">
+            <h2 className="text-xl font-bold text-slate-300">Telemetria Atual</h2>
+            <div className="bg-slate-850 p-5 rounded-2xl border border-slate-750 flex justify-between items-center shadow-md">
               <div>
-                <p className="text-sm font-medium text-slate-400 uppercase tracking-wider">Temperatura</p>
-                <p className="text-4xl font-black mt-2 text-white">{sensorTemp.toFixed(1)}°C</p>
+                <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Temperatura</p>
+                <p className="text-3xl font-black mt-1 text-white">{sensorTemp.toFixed(1)}°C</p>
               </div>
-              <div className="text-4xl p-4 bg-orange-500/10 rounded-2xl text-orange-400">🌡️</div>
+              <span className="text-3xl p-3 bg-orange-500/10 rounded-xl text-orange-400">🌡️</span>
             </div>
-
-            {/* Card Luminosidade */}
-            <div className="bg-gradient-to-br from-slate-800 to-slate-850 p-6 rounded-2xl border border-slate-750 shadow-xl flex justify-between items-center">
+            <div className="bg-slate-850 p-5 rounded-2xl border border-slate-750 flex justify-between items-center shadow-md">
               <div>
-                <p className="text-sm font-medium text-slate-400 uppercase tracking-wider">Luminosidade (LDR)</p>
-                <p className="text-4xl font-black mt-2 text-white">{sensorLuz}</p>
+                <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Luminosidade</p>
+                <p className="text-3xl font-black mt-1 text-white">{sensorLuz} lx</p>
               </div>
-              <div className="text-4xl p-4 bg-yellow-500/10 rounded-2xl text-yellow-400">☀️</div>
+              <span className="text-3xl p-3 bg-yellow-500/10 rounded-xl text-yellow-400">☀️</span>
             </div>
-
           </div>
-        </section>
 
-        {/* SEÇÃO 2: INTERRUPTORES (ATUADORES) */}
-        <section>
-          <h2 className="text-xl font-bold mb-4 text-slate-300">Controle de Atuadores</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-            
-            {/* Botão Lâmpada LED */}
-            <button 
-              onClick={() => alternarDispositivo("led", ledStatus, setLedStatus)}
-              className={`p-6 rounded-2xl border transition-all duration-200 text-left shadow-lg flex flex-col justify-between h-40 ${
-                ledStatus === "ON" 
-                  ? "bg-yellow-500/10 border-yellow-500/40 text-yellow-400 shadow-yellow-500/5 hover:bg-yellow-500/15" 
-                  : "bg-slate-800 border-slate-750 text-slate-400 hover:border-slate-700 hover:bg-slate-750"
-              }`}
-            >
-              <span className="text-3xl">💡</span>
-              <div>
-                <p className="font-bold text-lg text-white">Iluminação LED</p>
-                <p className="text-sm mt-1 font-medium">{ledStatus === "ON" ? "Ligado" : "Desligado"}</p>
-              </div>
-            </button>
-
-            {/* Botão Ar-Condicionado */}
-            <button 
-              onClick={() => alternarDispositivo("ar", arStatus, setArStatus)}
-              className={`p-6 rounded-2xl border transition-all duration-200 text-left shadow-lg flex flex-col justify-between h-40 ${
-                arStatus === "ON" 
-                  ? "bg-cyan-500/10 border-cyan-500/40 text-cyan-400 shadow-cyan-500/5 hover:bg-cyan-500/15" 
-                  : "bg-slate-800 border-slate-750 text-slate-400 hover:border-slate-700 hover:bg-slate-750"
-              }`}
-            >
-              <span className="text-3xl">❄️</span>
-              <div>
-                <p className="font-bold text-lg text-white">Ar-Condicionado</p>
-                <p className="text-sm mt-1 font-medium">{arStatus === "ON" ? "Ligado" : "Desligado"}</p>
-              </div>
-            </button>
-
-            {/* Botão Cortina */}
-            <button 
-              onClick={() => alternarDispositivo("cortina", cortinaStatus, setCortinaStatus)}
-              className={`p-6 rounded-2xl border transition-all duration-200 text-left shadow-lg flex flex-col justify-between h-40 ${
-                cortinaStatus === "ABERTA" 
-                  ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-400 shadow-emerald-500/5 hover:bg-emerald-500/15" 
-                  : "bg-slate-800 border-slate-750 text-slate-400 hover:border-slate-700 hover:bg-slate-750"
-              }`}
-            >
-              <span className="text-3xl">🪟</span>
-              <div>
-                <p className="font-bold text-lg text-white">Cortina (Servo)</p>
-                <p className="text-sm mt-1 font-medium">{cortinaStatus === "ABERTA" ? "Aberta (180°)" : "Fechada (0°)"}</p>
-              </div>
-            </button>
-
+          {/* Botões de Override Manual */}
+          <div className="lg:col-span-2 space-y-4">
+            <h2 className="text-xl font-bold text-slate-300">Controle Remoto (Mestre)</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <button onClick={() => alternarDispositivo("led", ledStatus, setLedStatus)} className={`p-5 rounded-2xl border text-left transition-all h-32 flex flex-col justify-between ${ledStatus === "ON" ? "bg-yellow-500/10 border-yellow-500/40 text-yellow-400" : "bg-slate-800 border-slate-750 text-slate-400"}`}><span className="text-2xl">💡</span><div><p className="font-bold text-white">Iluminação</p><p className="text-xs">{ledStatus === "ON" ? "Ligado" : "Desligado"}</p></div></button>
+              <button onClick={() => alternarDispositivo("ar", arStatus, setArStatus)} className={`p-5 rounded-2xl border text-left transition-all h-32 flex flex-col justify-between ${arStatus === "ON" ? "bg-cyan-500/10 border-cyan-500/40 text-cyan-400" : "bg-slate-800 border-slate-750 text-slate-400"}`}><span className="text-2xl">❄️</span><div><p className="font-bold text-white">Climatização</p><p className="text-xs">{arStatus === "ON" ? "Ligado" : "Desligado"}</p></div></button>
+              <button onClick={() => alternarDispositivo("cortina", cortinaStatus, setCortinaStatus)} className={`p-5 rounded-2xl border text-left transition-all h-32 flex flex-col justify-between ${cortinaStatus === "ABERTA" ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-400" : "bg-slate-800 border-slate-750 text-slate-400"}`}><span className="text-2xl">🪟</span><div><p className="font-bold text-white">Cortina</p><p className="text-xs">{cortinaStatus === "ABERTA" ? "Aberta (180°)" : "Fechada (0°)"}</p></div></button>
+            </div>
           </div>
-        </section>
+        </div>
 
+        {/* REGRAS AUTOMÁTICAS: GERENCIADOR DINÂMICO */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pt-4 border-t border-slate-800">
+          
+          {/* Formulário de Criação */}
+          <div className="lg:col-span-2 bg-slate-850 p-6 rounded-2xl border border-slate-750 shadow-xl space-y-4">
+            <h2 className="text-xl font-bold text-emerald-400">Nova Regra de Automação</h2>
+            <form onSubmit={salvarNovaRegra} className="space-y-4">
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 block mb-1">Nome da Regra</label>
+                  <input type="text" value={nomeRegra} onChange={(e) => setNomeRegra(e.target.value)} placeholder="Ex: LATE NIGHT ou HOT DAY" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-white focus:outline-none focus:border-emerald-500" required />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-400 block mb-1">Gatilho de Disparo</label>
+                  <select value={tipoRegra} onChange={(e) => setTipoRegra(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-white focus:outline-none focus:border-emerald-500">
+                    <option value="HORARIO_PONTUAL">Horário Pontual Fixo</option>
+                    <option value="CONDICAO_SENSOR">Intervalo de Horário + Sensor</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Parâmetros Condicionais (Renderiza apenas se for regra de sensor) */}
+              <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50 space-y-3">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Configuração de Gatilho</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">Hora de Início</label>
+                    <input type="time" value={horaInicio} onChange={(e) => setHoraInicio(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white" required />
+                  </div>
+                  {tipoRegra === "CONDICAO_SENSOR" && (
+                    <>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Hora de Término</label>
+                        <input type="time" value={horaFim} onChange={(e) => setHoraFim(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white" required />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-400 block mb-1">Sensor</label>
+                        <select value={sensorAlvo} onChange={(e) => setSensorAlvo(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white">
+                          <option value="temp">Temperatura</option>
+                          <option value="luz">Luminosidade</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {tipoRegra === "CONDICAO_SENSOR" && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Operador</label>
+                      <select value={operador} onChange={(e) => setOperador(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white">
+                        <option value=">">Maior que (&gt;)</option>
+                        <option value="<">Menor que (&lt;)</option>
+                        <option value="==">Igual a (==)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Valor Limite (Gatilho)</label>
+                      <input type="number" step="0.1" value={valorGatilho} onChange={(e) => setValorGatilho(e.target.value)} placeholder="Ex: 30.0 ou 800" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white" required />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* CONJUNTO DE COMANDOS JSON */}
+              <div className="p-4 bg-emerald-500/5 rounded-xl border border-emerald-500/10 space-y-3">
+                <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Ações Executadas (Carga Útil JSON)</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">Lâmpada LED</label>
+                    <select value={cmdLed} onChange={(e) => setCmdLed(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white">
+                      <option value="MANTER">Manter como está</option>
+                      <option value="ON">LIGAR</option>
+                      <option value="OFF">DESLIGAR</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">Ar-Condicionado</label>
+                    <select value={cmdAr} onChange={(e) => setCmdAr(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white">
+                      <option value="MANTER">Manter como está</option>
+                      <option value="ON">LIGAR</option>
+                      <option value="OFF">DESLIGAR</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">Cortina</label>
+                    <select value={cmdCortina} onChange={(e) => setCmdCortina(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white">
+                      <option value="MANTER">Manter como está</option>
+                      <option value="ABERTA">ABRIR</option>
+                      <option value="FECHADA">FECHAR</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <button type="submit" className="w-full bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold py-3 rounded-xl transition-all shadow-md shadow-emerald-950/20">
+                Salvar Regra de Automação
+              </button>
+            </form>
+          </div>
+
+          {/* Banco de Regras Ativas */}
+          <div className="lg:col-span-1 space-y-4">
+            <h2 className="text-xl font-bold text-slate-300">Regras Ativas no Banco</h2>
+            <div className="space-y-3 max-h-[480px] overflow-y-auto pr-2">
+              {regras.length === 0 ? (
+                <p className="text-sm text-slate-500 italic p-4 bg-slate-850 rounded-xl border border-slate-800">Nenhuma regra cadastrada na sala1.</p>
+              ) : (
+                regras.map((reg) => (
+                  <div key={reg.id} className="bg-slate-850 p-4 rounded-xl border border-slate-750 space-y-2 shadow-sm relative group">
+                    
+                    <div className="flex justify-between items-start">
+                      <div className="pr-6">
+                        <h3 className="font-bold text-white tracking-wide">{reg.nome}</h3>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full inline-block mt-1 ${reg.tipoRegra === "HORARIO_PONTUAL" ? "bg-purple-500/10 text-purple-400 border border-purple-500/20" : "bg-blue-500/10 text-blue-400 border border-blue-500/20"}`}>
+                          {reg.tipoRegra === "HORARIO_PONTUAL" ? "Fixo" : "Sensor"}
+                        </span>
+                      </div>
+                      
+                      {/* Botão de Excluir (Lixeira) */}
+                      <button 
+                        onClick={() => excluirRegra(reg.id)}
+                        className="text-slate-500 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 transition-colors absolute top-3 right-3"
+                        title="Excluir Regra"
+                      >
+                        🗑️
+                      </button>
+                    </div>
+
+                    <p className="text-xs text-slate-400">
+                      Horário: <span className="text-slate-300 font-medium">{reg.horaInicio.substring(0,5)}</span>
+                      {reg.horaFim && <> até <span className="text-slate-300 font-medium">{reg.horaFim.substring(0,5)}</span></>}
+                    </p>
+                    {reg.sensorAlvo && (
+                      <p className="text-xs text-slate-400">
+                        Condição: <span className="text-emerald-400 font-semibold">{reg.sensorAlvo} {reg.operador} {reg.valorGatilho}</span>
+                      </p>
+                    )}
+                    <div className="pt-2 border-t border-slate-800/60">
+                      <p className="text-[11px] text-slate-500 block mb-1 font-mono font-bold uppercase tracking-wider">Payload JSON Emitido:</p>
+                      <code className="text-[11px] block bg-slate-900 p-2 rounded border border-slate-800 text-teal-400 overflow-x-auto font-mono">
+                        {reg.comandosJson}
+                      </code>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
       </main>
     </div>
   );
