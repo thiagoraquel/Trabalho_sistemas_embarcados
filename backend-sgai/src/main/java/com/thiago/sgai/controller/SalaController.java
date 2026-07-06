@@ -13,7 +13,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api/salas")
-@CrossOrigin(origins = "http://localhost:3000") // <-- ESSA É A LINHA MÁGICA!
+@CrossOrigin(origins = "*") // <-- Adicione esta linha para liberar o acesso do React!
 public class SalaController {
 
     private final EstadoDispositivoRepository estadoRepository;

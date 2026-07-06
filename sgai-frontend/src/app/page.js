@@ -9,12 +9,12 @@ export default function Dashboard() {
   const [cortinaStatus, setCortinaStatus] = useState("FECHADA");
   const [sensorTemp, setSensorTemp] = useState(0.0);
   const [sensorLuz, setSensorLuz] = useState(0);
+  // NOVOS ESTADOS
+  const [sensorUmidade, setSensorUmidade] = useState(0.0);
+  const [sensorPresenca, setSensorPresenca] = useState("0"); 
 
-  // NOVO: Escudo de tempo para evitar as "piscadas" dos botões.
-  // Guarda o milissegundo exato em que o usuário clicou em cada botão.
   const bloqueioUI = useRef({ led: 0, ar: 0, cortina: 0 });
 
-  // Estados para Listagem e Criação de Regras
   const [regras, setRegras] = useState([]);
   const [nomeRegra, setNomeRegra] = useState("");
   const [tipoRegra, setTipoRegra] = useState("HORARIO_PONTUAL");
@@ -24,12 +24,10 @@ export default function Dashboard() {
   const [operador, setOperador] = useState(">");
   const [valorGatilho, setValorGatilho] = useState("");
   
-  // Estados dos comandos que a regra vai enviar
   const [cmdLed, setCmdLed] = useState("MANTER");
   const [cmdAr, setCmdAr] = useState("MANTER");
   const [cmdCortina, setCmdCortina] = useState("MANTER");
 
-  // Carrega sensores, atuadores e a lista de regras do banco
   const carregarDadosDaSala = async () => {
     try {
       const resposta = await fetch("http://localhost:8080/api/salas/sala1/status");
@@ -38,14 +36,14 @@ export default function Dashboard() {
         const agora = Date.now();
 
         dados.forEach((disp) => {
-          // ATUADORES: O React só aceita o valor do banco se já passaram 7 segundos do último clique manual.
           if (disp.dispositivo === "led" && (agora - bloqueioUI.current.led > 7000)) setLedStatus(disp.estado);
           if (disp.dispositivo === "ar" && (agora - bloqueioUI.current.ar > 7000)) setArStatus(disp.estado);
           if (disp.dispositivo === "cortina" && (agora - bloqueioUI.current.cortina > 7000)) setCortinaStatus(disp.estado);
           
-          // SENSORES: Como não clicamos neles, sempre atualizam em tempo real!
           if (disp.dispositivo === "temp") setSensorTemp(parseFloat(disp.estado));
           if (disp.dispositivo === "luz") setSensorLuz(parseInt(disp.estado));
+          if (disp.dispositivo === "umidade") setSensorUmidade(parseFloat(disp.estado));
+          if (disp.dispositivo === "presenca") setSensorPresenca(disp.estado);
         });
       }
     } catch (erro) {
@@ -76,7 +74,6 @@ export default function Dashboard() {
     return () => clearInterval(intervalo);
   }, []);
 
-  // Envia comando de override manual
   const alternarDispositivo = async (dispositivo, estadoAtual, setEstado) => {
     let comandoStr = "";
     if (dispositivo === "cortina") {
@@ -94,9 +91,7 @@ export default function Dashboard() {
         body: comandoStr,
       });
       if (resposta.ok) {
-        // Ativa o escudo de tempo para este dispositivo específico!
         bloqueioUI.current[dispositivo] = Date.now();
-
         const novoEstado = (dispositivo === "cortina") 
           ? (comandoStr === "ABRIR_CORTINA" ? "ABERTA" : "FECHADA")
           : (comandoStr.startsWith("LIGAR") ? "ON" : "OFF"); 
@@ -108,7 +103,6 @@ export default function Dashboard() {
     }
   };
 
-  // Submete a nova regra customizada estruturando o JSON de comandos
   const salvarNovaRegra = async (e) => {
     e.preventDefault();
 
@@ -152,7 +146,6 @@ export default function Dashboard() {
     }
   };
 
-  // Dispara a remoção da regra no backend
   const excluirRegra = async (id) => {
     if (!confirm("Tem certeza que deseja remover esta regra de automação?")) return;
 
@@ -162,7 +155,6 @@ export default function Dashboard() {
       });
 
       if (resp.ok) {
-        // Recarrega a lista de regras dinamicamente na tela
         carregarRegras();
       } else {
         alert("Erro ao tentar excluir a regra no servidor.");
@@ -192,6 +184,8 @@ export default function Dashboard() {
           {/* Cards de Sensores */}
           <div className="lg:col-span-1 space-y-4">
             <h2 className="text-xl font-bold text-slate-300">Telemetria Atual</h2>
+            
+            {/* Temperatura */}
             <div className="bg-slate-850 p-5 rounded-2xl border border-slate-750 flex justify-between items-center shadow-md">
               <div>
                 <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Temperatura</p>
@@ -199,12 +193,36 @@ export default function Dashboard() {
               </div>
               <span className="text-3xl p-3 bg-orange-500/10 rounded-xl text-orange-400">🌡️</span>
             </div>
+
+            {/* Umidade */}
+            <div className="bg-slate-850 p-5 rounded-2xl border border-slate-750 flex justify-between items-center shadow-md">
+              <div>
+                <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Umidade</p>
+                <p className="text-3xl font-black mt-1 text-white">{sensorUmidade.toFixed(1)}%</p>
+              </div>
+              <span className="text-3xl p-3 bg-blue-500/10 rounded-xl text-blue-400">💧</span>
+            </div>
+
+            {/* Luminosidade */}
             <div className="bg-slate-850 p-5 rounded-2xl border border-slate-750 flex justify-between items-center shadow-md">
               <div>
                 <p className="text-xs text-slate-400 uppercase tracking-wider font-semibold">Luminosidade</p>
                 <p className="text-3xl font-black mt-1 text-white">{sensorLuz} lx</p>
               </div>
               <span className="text-3xl p-3 bg-yellow-500/10 rounded-xl text-yellow-400">☀️</span>
+            </div>
+
+            {/* Presença (PIR) */}
+            <div className={`p-5 rounded-2xl border flex justify-between items-center shadow-md transition-all ${sensorPresenca === "1" ? "bg-red-500/10 border-red-500/40" : "bg-slate-850 border-slate-750"}`}>
+              <div>
+                <p className={`text-xs uppercase tracking-wider font-semibold ${sensorPresenca === "1" ? "text-red-400" : "text-slate-400"}`}>Movimento</p>
+                <p className={`text-2xl font-black mt-1 ${sensorPresenca === "1" ? "text-red-400" : "text-white"}`}>
+                  {sensorPresenca === "1" ? "DETECTADO" : "Calmo"}
+                </p>
+              </div>
+              <span className={`text-3xl p-3 rounded-xl ${sensorPresenca === "1" ? "bg-red-500/20 text-red-400" : "bg-slate-700/50 text-slate-400"}`}>
+                {sensorPresenca === "1" ? "🏃" : "🧘"}
+              </span>
             </div>
           </div>
 
@@ -242,31 +260,29 @@ export default function Dashboard() {
               </div>
 
               {/* Parâmetros Condicionais (Renderiza apenas se for regra de sensor) */}
-              <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50 space-y-3">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Configuração de Gatilho</p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="text-xs text-slate-400 block mb-1">Hora de Início</label>
-                    <input type="time" value={horaInicio} onChange={(e) => setHoraInicio(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white" required />
+              {tipoRegra === "CONDICAO_SENSOR" && (
+                <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50 space-y-3">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Configuração de Gatilho</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Hora de Início</label>
+                      <input type="time" value={horaInicio} onChange={(e) => setHoraInicio(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white" required />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Hora de Término</label>
+                      <input type="time" value={horaFim} onChange={(e) => setHoraFim(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white" required />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-400 block mb-1">Sensor</label>
+                      <select value={sensorAlvo} onChange={(e) => setSensorAlvo(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white">
+                        <option value="temp">Temperatura</option>
+                        <option value="luz">Luminosidade</option>
+                        <option value="umidade">Umidade</option>
+                        <option value="presenca">Presença (1=Sim, 0=Não)</option>
+                      </select>
+                    </div>
                   </div>
-                  {tipoRegra === "CONDICAO_SENSOR" && (
-                    <>
-                      <div>
-                        <label className="text-xs text-slate-400 block mb-1">Hora de Término</label>
-                        <input type="time" value={horaFim} onChange={(e) => setHoraFim(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white" required />
-                      </div>
-                      <div>
-                        <label className="text-xs text-slate-400 block mb-1">Sensor</label>
-                        <select value={sensorAlvo} onChange={(e) => setSensorAlvo(e.target.value)} className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white">
-                          <option value="temp">Temperatura</option>
-                          <option value="luz">Luminosidade</option>
-                        </select>
-                      </div>
-                    </>
-                  )}
-                </div>
 
-                {tipoRegra === "CONDICAO_SENSOR" && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
                     <div>
                       <label className="text-xs text-slate-400 block mb-1">Operador</label>
@@ -278,11 +294,11 @@ export default function Dashboard() {
                     </div>
                     <div>
                       <label className="text-xs text-slate-400 block mb-1">Valor Limite (Gatilho)</label>
-                      <input type="number" step="0.1" value={valorGatilho} onChange={(e) => setValorGatilho(e.target.value)} placeholder="Ex: 30.0 ou 800" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white" required />
+                      <input type="number" step="0.1" value={valorGatilho} onChange={(e) => setValorGatilho(e.target.value)} placeholder="Ex: 30.0, 800 ou 1" className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-white" required />
                     </div>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
 
               {/* CONJUNTO DE COMANDOS JSON */}
               <div className="p-4 bg-emerald-500/5 rounded-xl border border-emerald-500/10 space-y-3">
@@ -339,7 +355,6 @@ export default function Dashboard() {
                         </span>
                       </div>
                       
-                      {/* Botão de Excluir (Lixeira) */}
                       <button 
                         onClick={() => excluirRegra(reg.id)}
                         className="text-slate-500 hover:text-red-400 p-1.5 rounded-lg hover:bg-red-500/10 transition-colors absolute top-3 right-3"
@@ -350,8 +365,10 @@ export default function Dashboard() {
                     </div>
 
                     <p className="text-xs text-slate-400">
-                      Horário: <span className="text-slate-300 font-medium">{reg.horaInicio.substring(0,5)}</span>
-                      {reg.horaFim && <> até <span className="text-slate-300 font-medium">{reg.horaFim.substring(0,5)}</span></>}
+                      Horário: <span className="text-slate-300 font-medium">
+                        {reg.horaInicio ? reg.horaInicio.substring(0,5) : "Tempo Integral"}
+                      </span>
+                      {reg.horaFim ? <> até <span className="text-slate-300 font-medium">{reg.horaFim.substring(0,5)}</span></> : ""}
                     </p>
                     {reg.sensorAlvo && (
                       <p className="text-xs text-slate-400">

@@ -19,9 +19,8 @@ public class MqttListenerService implements MqttCallback {
     private final MqttClient mqttClient;
     private final HistoricoSensorRepository historicoRepository;
     private final EstadoDispositivoRepository estadoRepository;
-    private final MotorRegrasService motorRegrasService; // <-- ADICIONE AQUI
+    private final MotorRegrasService motorRegrasService;
 
-    // O Spring injeta automaticamente o cliente MQTT e os dois repositórios do banco aqui
     public MqttListenerService(MqttClient mqttClient, 
                                HistoricoSensorRepository historicoRepository, 
                                EstadoDispositivoRepository estadoRepository,
@@ -36,7 +35,7 @@ public class MqttListenerService implements MqttCallback {
     public void init() {
         try {
             mqttClient.setCallback(this);
-            mqttClient.subscribe("sgai/#", 1); // Escuta universal
+            mqttClient.subscribe("sgai/#", 1); 
             System.out.println("SGAI Master Listener initialized. Subscribed to 'sgai/#'");
         } catch (MqttException e) {
             System.err.println("Error subscribing to MQTT topics: " + e.getMessage());
@@ -57,17 +56,16 @@ public class MqttListenerService implements MqttCallback {
             String salaId = partes[1];
             String tipoDispositivo = partes[2];
             
-            // O único print limpo e direto no console
             System.out.println("[MQTT] Sala: " + salaId + " | Disp: " + tipoDispositivo + " | Valor: " + payload);
 
             try {
-                // 1. Salva no Histórico (apenas sensores contínuos)
-                if (tipoDispositivo.equals("temp") || tipoDispositivo.equals("luz")) {
+                // 1. Salva no Histórico e Aciona o Motor de Regras (Agora inclui umidade e presenca)
+                if (tipoDispositivo.equals("temp") || tipoDispositivo.equals("luz") || 
+                    tipoDispositivo.equals("umidade") || tipoDispositivo.equals("presenca")) {
                     try {
                         Double valorNumerico = Double.parseDouble(payload);
                         historicoRepository.save(new HistoricoSensor(salaId, tipoDispositivo, valorNumerico));
                         
-                        // DISPARO DO MOTOR: Manda os dados frescos para serem avaliados pelas regras!
                         motorRegrasService.avaliarRegra(salaId, tipoDispositivo, valorNumerico);
                         
                     } catch (NumberFormatException e) {
@@ -75,7 +73,7 @@ public class MqttListenerService implements MqttCallback {
                     }
                 }
                 
-                // 2. Atualiza a fotografia do Estado Atual (para todos)
+                // 2. Atualiza a fotografia do Estado Atual (para todos os tópicos)
                 Optional<EstadoDispositivo> estadoExistente = estadoRepository.findBySalaAndDispositivo(salaId, tipoDispositivo);
                 if (estadoExistente.isPresent()) {
                     EstadoDispositivo dispositivo = estadoExistente.get();
@@ -93,6 +91,5 @@ public class MqttListenerService implements MqttCallback {
 
     @Override
     public void deliveryComplete(IMqttDeliveryToken token) {
-        // Usado quando o backend envia mensagens
     }
 }
